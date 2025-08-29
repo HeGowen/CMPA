@@ -1,29 +1,48 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
+import com.company.cmpa 1.0
 
 ApplicationWindow {
     id: root
-    width: 640
+    width: 400
     height: 480
     visible: true
-    title: "Digital Human Demo"
+    title: "Digital Human Lip Sync"
 
-    Image {
-        id: digitalHumanDisplay
+    ColumnLayout {
         anchors.fill: parent
-        source: "image://digitalHuman/frame"
-        cache: false 
-    }
+        anchors.margins: 16
 
-    Timer {
-        interval: 33 // ~30 FPS
-        running: true
-        repeat: true
-        onTriggered: {
-            // By changing the source, we force a reload from the provider
-            var oldSource = digitalHumanDisplay.source
-            digitalHumanDisplay.source = ""
-            digitalHumanDisplay.source = oldSource
+        Image {
+            id: mouthImage
+            source: DigitalHuman.currentMouthImage
+            Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            Layout.preferredHeight: 200
+            fillMode: Image.PreserveAspectFit
+        }
+
+        Label {
+            text: "Enter text to speak:"
+            Layout.topMargin: 16
+        }
+
+        TextField {
+            id: textInput
+            text: "Hello world, this is a test."
+            placeholderText: "Type something..."
+            Layout.fillWidth: true
+        }
+
+        Button {
+            id: speakButton
+            text: "Speak"
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 8
+            onClicked: {
+                DigitalHuman.speak(textInput.text)
+            }
         }
     }
 }
