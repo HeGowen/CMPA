@@ -18,12 +18,12 @@ class DigitalHumanProvider(QQuickImageProvider):
 
     def requestPixmap(self, id, size, requestedSize):
         if latest_frame is not None:
-            return QPixmap.fromImage(latest_frame), latest_frame.size()
+            return QPixmap.fromImage(latest_frame)
         
         # Return a placeholder if no frame is ready
         placeholder = QPixmap(640, 480)
         placeholder.fill(0)
-        return placeholder, placeholder.size()
+        return placeholder
 
 class Backend(QObject):
     def __init__(self):
@@ -75,9 +75,12 @@ if __name__ == "__main__":
 
     # Backend to generate frames
     backend = Backend()
+    # Register backend with the QML engine to prevent garbage collection
+    engine.rootContext().setContextProperty("backend", backend)
     
     qml_file = Path(__file__).parent / "main.qml"
-    engine.load(qml_file)
+    # Load QML file using a QUrl for reliability
+    engine.load(QUrl.fromLocalFile(str(qml_file)))
 
     if not engine.rootObjects():
         sys.exit(-1)
