@@ -3,6 +3,82 @@
 // Draw mirrored video, solid green "detected bbox", dashed cyan "crop used".
 // Always prefer locationData.relativeBoundingBox; fallback to boundingBox with heuristics.
 
+//  概览                                                                                                                                                                              
+                                                                                                                                                                                    
+//   - 提供两层相机封装：                                                                                                                                                              
+//       - FaceCam：获取摄像头画面，调用 MediaPipe FaceDetection 做人脸检测，绘制镜像视频、检测框和裁剪框，并产出对齐的人脸裁剪图（224×224）。                                         
+//       - WebcamSource：在 FaceCam 之上做“分发器”，把每帧信息分发给可选的消费者（服务端推流、VA、凝视/注视模块），并保留对外的 onFrame 回调。                                         
+                                                                                                                                                                                    
+//   主要职责                                                                                                                                                                          
+                                                                                                                                                                                    
+//   - 打开摄像头、播放视频、在主画布上镜像显示。                                                                                                                                      
+//   - 使用 MediaPipe FaceDetection 检测人脸，优先使用 locationData.relativeBoundingBox，否则回退到 boundingBox 并做归一化/像素推断。                                                  
+//   - 提取双眼关键点（如有），据此对画面旋转对齐并裁剪人脸（正方形，带 padding，缩放到 224）。                                                                                        
+//   - 叠加调试可视化：绿色实线为“检测框”，青色虚线为“实际裁剪范围”，黄色圆点为双眼。                                                                                                  
+//   - 每帧产出结构化结果交给 onFrame，并由 WebcamSource 可选地分发给三个消费者。                                                                                                      
+                                                                                                                                                                                    
+//   关键流程                                                                                                                                                                          
+                                                                                                                                                                                    
+//   - start()：                                                                                                                                                                       
+//       - 调 getUserMedia({video:1280×720}) 启动摄像头，播放到 video。                                                                                                                
+//       - _ensureFD() 初始化 FaceDetection（模型 short、min conf=0.5，资源路径 ./vendor/face_detection/…），注册 onResults 将结果存到 _lastRes，并用 16×16 画布做一次 warm-up。       
+//       - 标记 _running=true，进入 _loop()。                                                                                                                                          
+//   - _loop() 每帧：                                                                                                                                                                  
+//       - _drawVideoMirrored() 将视频帧（可水平翻转）画到主画布，得到 vw/vh。                                                                                                         
+//       - fd.send({ image: this.video }) 触发检测，并读取 _lastRes 的第一张人脸。                                                                                                     
+//       - _chooseRelBox() 选择相对框：优先 relativeBoundingBox，回退 boundingBox（中心或原点、归一化或像素），并做 sanity（宽高范围 0.01–0.95）和 [0,1] 裁剪，生成像素框 bbPix；同时  
+//   _getEyes() 解析左右眼。                                                                                                                                                           
+//       - 画出绿色检测框和黄色眼点。                                                                                                                                                  
+//       - 生成裁剪：                                                                                                                                                                  
+//           - 有眼点：_alignedCrop() 先将视频在离屏画布旋转到“眼睛水平”，再以人脸中心裁出带 padding 的正方形，缩放到 224。                                                            
+//           - 无眼点：_bboxCrop() 仅按检测框中心裁剪，缩放到 224。                                                                                                                    
+//       - 画出青色虚线的“实际裁剪范围”。                                                                                                                                              
+//       - 调用 this._onFrame({ detections, used:'aligned'|'bbox'|'none', crop, dbg:{bbPix,eyes} })。                                                                                  
+//       - requestAnimationFrame 继续循环。                                                                                                                                            
+//   - stop()：停止 RAF，关闭检测器，停止媒体轨、清空画布。                                                                                                                            
+//   - setDebug()：开关调试信息（画面左上角黑底白字的状态文本）。                                                                                                                      
+                                                                                                                                                                                    
+//   重要实现细节                                                                                                                                                                      
+                                                                                                                                                                                    
+//   - 坐标镜像：实际绘制时如果翻转显示，X 坐标通过 _mirrorX() 修正，保证框线位置与镜像画面一致；裁剪仍基于原始视频坐标。                                                              
+//   - 框选择与归一化：                                                                                                                                                                
+//       - relativeBoundingBox 直接使用。                                                                                                                                              
+//       - boundingBox 同时兼容 center/origin、normalized/pixel 两种格式，必要时按视频宽高转为相对坐标。                                                                               
+//   - 眼点与对齐：从 locationData.relativeKeypoints 取左右眼（像素化后），用两眼连线角度旋转；无眼点则降级为不旋转的 bbox 裁剪。                                                      
+//   - 性能：频繁读写的离屏画布上下文用 { willReadFrequently: true }；主画布正常绘制。                                                                                                 
+//   - 默认参数：padding≈0.28，输出裁剪尺寸 224，debug: true，flipDisplay: true。                                                                                                      
+                                                                                                                                                                                    
+//   对外 API                                                                                                                                                                          
+                                                                                                                                                                                    
+//   - FaceCam：                                                                                                                                                                       
+//       - start() / stop() / setDebug(v) / onFrame(cb)                                                                                                                                
+//   - WebcamSource（包装 FaceCam 并做分发）：                                                                                                                                         
+//       - 同步暴露 start/stop/setDebug/onFrame                                                                                                                                        
+//       - 消费者注册：setServerStreamer(fn), setVAConsumer(fn), setGazeConsumer(fn)                                                                                                   
+//       - 分发策略：                                                                                                                                                                  
+//           - Server：目前仅传元数据 { ts, width, height }（避免拷贝像素，属设计占位）。                                                                                              
+//           - VA：传 ImageData 或 null，以及 { detections }。                                                                                                                         
+//           - Gaze：传裁剪画布的克隆（避免副作用）和 bbPix，以及 { used }。                                                                                                           
+                                                                                                                                                                                    
+//   输出数据结构示例                                                                                                                                                                  
+                                                                                                                                                                                    
+//   - onFrame(info) 中的 info：                                                                                                                                                       
+//       - detections: 0|1（是否检测到人脸，当前仅取第一张）                                                                                                                           
+//       - used: 'aligned' | 'bbox' | 'none'                                                                                                                                           
+//       - crop: { canvas, angleDeg, cropRect:{x1,y1,x2,y2} } | null                                                                                                                   
+//       - dbg: { bbPix:{x,y,w,h}|null, eyes:{l:{x,y}, r:{x,y}}|null }                                                                                                                 
+                                                                                                                                                                                    
+//   依赖与资源                                                                                                                                                                        
+                                                                                                                                                                                    
+//   - 依赖 MediaPipe FaceDetection 的全局 FaceDetection 构造（模型资源位于 ./vendor/face_detection/）。                                                                               
+//   - 运行于渲染进程，使用 <video> + <canvas>。                                                                                                                                       
+                                                                                                                                                                                    
+//   注意点                                                                                                                                                                            
+                                                                                                                                                                                    
+//   - 仅处理第一张人脸（如需多人脸需扩展）。                                                                                                                                          
+//   - 资源路径依赖 vendor/face_detection 已被正确拷贝（对应仓库的 vendor 获取流程）。                                                                                                 
+//   - 镜像只影响显示与叠加绘制，裁剪数据仍基于原始方向。       
+
 export class FaceCam {
   constructor(canvas, video, opts = {}) {
     this.canvas = canvas;
@@ -330,5 +406,88 @@ export class FaceCam {
     });
 
     this._raf = requestAnimationFrame(() => this._loop());
+  }
+}
+
+// WebcamSource: central camera manager and frame distributor
+// - Wraps FaceCam to keep existing behavior intact
+// - Provides optional consumer hooks for server streaming (stub), VA, and Gaze
+// - By default, all consumers are no-ops; external code may still use cam.onFrame()
+export class WebcamSource {
+  constructor(canvas, video, opts = {}) {
+    this.cam = new FaceCam(canvas, video, opts);
+
+    // Optional external consumers; all default to no-op
+    this._serverStreamer = null; // design stub: function(frameMeta) {}
+    this._vaConsumer = null;     // function(imgDataOrNull, meta) {}
+    this._gazeConsumer = null;   // function(canvasOrNull, bbPix, meta) {}
+
+    // Preserve user onFrame subscription, while auto-distributing first
+    this._userOnFrame = null;
+
+    // Wire internal distribution pipeline
+    this.cam.onFrame(async (info) => {
+      try { await this._distribute(info); } catch (e) { /* swallow */ }
+      if (this._userOnFrame) {
+        try { this._userOnFrame(info); } catch {}
+      }
+    });
+  }
+
+  // Public API parity with FaceCam
+  async start() { return this.cam.start(); }
+  stop() { return this.cam.stop(); }
+  setDebug(v) { return this.cam.setDebug(v); }
+  onFrame(cb) { this._userOnFrame = (typeof cb === 'function') ? cb : null; }
+
+  // Consumers registration
+  setServerStreamer(fn) { this._serverStreamer = (typeof fn === 'function') ? fn : null; }
+  setVAConsumer(fn) { this._vaConsumer = (typeof fn === 'function') ? fn : null; }
+  setGazeConsumer(fn) { this._gazeConsumer = (typeof fn === 'function') ? fn : null; }
+
+  // Internal: clone a 2D canvas to a fresh canvas (used when duplicating to independent consumers)
+  _cloneCanvas(src) {
+    if (!src) return null;
+    const c = document.createElement('canvas');
+    c.width = src.width; c.height = src.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(src, 0, 0);
+    return c;
+  }
+
+  async _distribute(info) {
+    // info: { detections, used, crop, dbg:{bbPix, eyes} }
+    const cropCanvas = info && info.crop && info.crop.canvas ? info.crop.canvas : null;
+    const bbPix = info && info.dbg ? info.dbg.bbPix : null;
+
+    // 1) Server image stream (design stub) — do nothing by default
+    if (this._serverStreamer && cropCanvas) {
+      try {
+        const ts = performance.now();
+        // Design: pass metadata only for now; avoid heavy copies unless needed
+        // The streamer may request its own extraction strategy later
+        this._serverStreamer({ ts, width: cropCanvas.width, height: cropCanvas.height });
+      } catch {}
+    }
+
+    // 2) VA consumer — provide ImageData or null, plus minimal meta (detections count)
+    if (this._vaConsumer) {
+      try {
+        let imgData = null;
+        if (cropCanvas) {
+          const ctx = cropCanvas.getContext('2d', { willReadFrequently: true });
+          imgData = ctx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
+        }
+        this._vaConsumer(imgData, { detections: info?.detections || 0 });
+      } catch {}
+    }
+
+    // 3) Gaze consumer — provide a canvas (clone to avoid side-effects) and face bbox if any
+    if (this._gazeConsumer) {
+      try {
+        const gazeCanvas = cropCanvas ? this._cloneCanvas(cropCanvas) : null;
+        this._gazeConsumer(gazeCanvas, bbPix, { used: info?.used || 'none' });
+      } catch {}
+    }
   }
 }

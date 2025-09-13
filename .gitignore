@@ -8,6 +8,7 @@ dist/
 
 # Package manager deps (third-party)
 node_modules/
+gaze_tracking/
 
 # Vendorized external dependencies (any level)
 vendor/

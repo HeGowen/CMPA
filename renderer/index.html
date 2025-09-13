@@ -209,7 +209,7 @@
   }
 
   // —— 相机 + VA + Gaze（沿用你现有逻辑，不破坏） —— //
-  import { FaceCam } from './js/cam.js';
+  import { WebcamSource } from './js/cam.js';
   import { VAPredictor } from './js/va.js';
   import { GazePredictor } from './js/gaze.js';
   import { GazeEngineJS } from './js/gaze_engine.js';
@@ -219,7 +219,7 @@
   const canvas = $('vaCanvas');
   const dbgBox = $('dbg');
 
-  const cam = new FaceCam(canvas, video, { debug: true }); // MediaPipe FaceDetection 的帧池
+  const cam = new WebcamSource(canvas, video, { debug: true }); // 中央相机分发（封装 FaceCam）
   const va  = new VAPredictor({
     setState: (t) => $('vaState').textContent = 'VA: ' + t,
     setV: (v) => $('valV').textContent = v,
@@ -296,7 +296,7 @@
     return { fps, div, scale };
   }
 
-  let lastTickTs = 0, tickCount = 0;
+  { let lastTickTs = 0, tickCount = 0;
 
   cam.onFrame(async (info) => {
     const { fps, div, scale } = getCfg();
@@ -411,6 +411,114 @@
     ctx.closePath();
     ctx.fill();
 
+    ctx.restore();
+  }
+
+  }
+  // New distributor-driven scheduling and consumers (WebcamSource)
+  let lastTickTs = 0; // gaze scheduler
+  let lastVaAt  = 0;  // VA scheduler
+
+  // Gaze consumer: runs at configured FPS; also drives 3D engine + arrow
+  cam.setGazeConsumer(async (faceCanvas, bbPix) => {
+    const { fps, scale } = getCfg();
+    const now = performance.now();
+    const period = 1000 / fps;
+    if (!gazeOn || !gaze.session) return;
+    if (!faceCanvas || !bbPix) return;
+    if (now - lastTickTs < period) return;
+    lastTickTs = now;
+
+    await gaze.feed(faceCanvas, bbPix);
+
+    if (engine.ready) {
+      try {
+        const { yaw, pitch } = gaze.getLastAngles();
+        if (Number.isFinite(yaw) && Number.isFinite(pitch)) {
+          const out = await engine.process(faceCanvas, pitch, yaw);
+          if (out) {
+            view3d.update(out.face_model_transformed, out.face_center, out.gaze_vector, out.point_on_screen_3d);
+            $('centerCoords').textContent = `Center(mm): (${out.face_center.map(v => v.toFixed(1)).join(', ')}) · Px=(${out.point_on_screen_px.join(',')})`;
+          }
+        }
+      } catch (e) { console.warn('[gaze-engine] process error:', e); }
+    }
+
+    drawGazeArrow(bbPix, scale);
+    $('vaNote').textContent = '';
+  });
+
+  // VA consumer: every N gaze ticks (~period * div)
+  cam.setVAConsumer((imgData) => {
+    if (!va.session) return;
+    const { fps, div } = getCfg();
+    const now = performance.now();
+    const period = 1000 / fps;
+    if (now - lastVaAt < period * div) return;
+    lastVaAt = now;
+    va.feed(imgData || null);
+  });
+
+  // Override previous onFrame: UI-only + resets when no detection
+  cam.onFrame(async (info) => {
+    const used = info.used && info.used !== 'none';
+    if (!used || !info.crop || !info.crop.canvas) {
+      if (va.session) va.feed(null);
+      $('vaNote').textContent = `faces: ${info.detections} / used: ${info.used || 'none'}`;
+      view3d.update(null, null, null, null);
+      if (!engine.ready) $('centerCoords').textContent = 'Center(mm): -- (engine init failed)';
+    }
+    $('valD').textContent = String(info.detections);
+    if (dbgOn) {
+      const lines = [];
+      lines.push(`faces: ${info.detections}  used: ${info.used}`);
+      if (info.dbg?.bbPix) lines.push(`bbPix x,y,w,h: ${info.dbg.bbPix.x},${info.dbg.bbPix.y},${info.dbg.bbPix.w},${info.dbg.bbPix.h}`);
+      if (info.crop) {
+        lines.push(`crop x1,y1,x2,y2: ${info.crop.cropRect.x1}, ${info.crop.cropRect.y1}, ${info.crop.cropRect.x2}, ${info.crop.cropRect.y2}`);
+        lines.push(`angle: ${info.crop.angleDeg.toFixed(1)}°`);
+      }
+      dbgBox.textContent = lines.join('\n');
+    }
+  });
+
+  // Arrow drawing using bbPix directly (mirroring consistent with existing canvas)
+  function drawGazeArrow(bbPix, scaleVal) {
+    const { yaw, pitch } = gaze.getLastAngles();
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
+    if (!bbPix) return;
+    const ctx = canvas.getContext('2d');
+    const vw = canvas.width;
+    const b = bbPix;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const L  = Math.max(8, b.w * (scaleVal ?? 1.6));
+    const yawRad = yaw * Math.PI / 180;
+    const pitchRad = pitch * Math.PI / 180;
+    const dx = -L * Math.sin(pitchRad) * Math.cos(yawRad);
+    const dy = -L * Math.sin(yawRad);
+    const x1 = cx, y1 = cy;
+    const x2 = cx + dx, y2 = cy + dy;
+    const drawX1 = vw - x1, drawY1 = y1;
+    const drawX2 = vw - x2, drawY2 = y2;
+    const thickness = Math.max(1, Math.min(6, Number($('gzThick').value) || 2));
+    const headRatio = Math.max(0.02, Math.min(0.3, Number($('gzHead').value) || 0.08));
+    const ah = headRatio * L;
+    ctx.save();
+    ctx.strokeStyle = '#ff0066';
+    ctx.fillStyle = '#ff0066';
+    ctx.lineWidth = thickness;
+    ctx.beginPath();
+    ctx.moveTo(drawX1, drawY1);
+    ctx.lineTo(drawX2, drawY2);
+    ctx.stroke();
+    const ang = Math.atan2(drawY2 - drawY1, drawX2 - drawX1);
+    const wing = Math.PI / 6;
+    ctx.beginPath();
+    ctx.moveTo(drawX2, drawY2);
+    ctx.lineTo(drawX2 - ah * Math.cos(ang - wing), drawY2 - ah * Math.sin(ang - wing));
+    ctx.lineTo(drawX2 - ah * Math.cos(ang + wing), drawY2 - ah * Math.sin(ang + wing));
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 </script>

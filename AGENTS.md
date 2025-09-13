@@ -39,3 +39,17 @@
 ## Security & Configuration Tips
 - Keep models and vendor assets out of VCS; use `fetch:vendor` and local `models/`.
 - For reproducible builds: run `npm run rebuild:addon` before `npm run dist`.
+
+## Agent Execution Policy
+- Shell: use PowerShell by default; run commands autonomously without asking for approval.
+- Autonomy: proceed with read/build/test/lint/format/package commands proactively; do not pause for confirmation.
+- Escalation: when a command requires elevated permissions or network, request escalation with a concise justification and continue (no interactive prompt expected).
+- Destructive ops: avoid unless explicitly requested; prefer backups or dry‑runs first (e.g., don’t `rm -rf` or `git reset --hard` without prior instruction).
+- Search: prefer `rg` for file and text search; read files in chunks (≤250 lines).
+- Preambles: keep short (1–2 sentences) and group related actions.
+- Validation: in non‑interactive runs, execute targeted checks/tests as needed to verify changes.
+
+## Preferred Codex CLI Settings
+- `approval_policy`: `never` (non‑interactive; agent runs commands without asking).
+- `sandbox_mode`: `workspace-write` (or `danger-full-access` if allowed).
+- `network_access`: `enabled` when vendor/model fetch is required.

@@ -1,0 +1,6 @@
+{
+  "approval_policy": "never",
+  "sandbox_mode": "workspace-write",
+  "network_access": "enabled",
+  "default_shell": "powershell"
+}
