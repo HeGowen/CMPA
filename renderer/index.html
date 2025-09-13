@@ -143,6 +143,7 @@
     <div class="row" style="margin-bottom:6px">
       <button id="gzStart">Start Gaze</button>
       <button id="gzStop">Stop</button>
+      <button id="gzTrackBtn">Compute Gaze Track</button>
       <span id="gzState" class="mono">Gaze: idle</span>
       <span class="mono">Yaw: <b id="gzYaw">--</b></span>
       <span class="mono">Pitch: <b id="gzPitch">--</b></span>
@@ -288,6 +289,20 @@
     gazeOn = true;
   };
   $('gzStop').onclick  = () => { gazeOn = false; gaze.reset(); view3d.update(null,null,null,null); $('centerCoords').textContent = 'Center(mm): --'; };
+
+  // New: one-click to start gaze tracking (distribute cam.js frames to gaze_engine.js)
+  $('gzTrackBtn').onclick = async () => {
+    await cam.start();
+    await gaze.ensureSession();
+    try {
+      await engine.ensureReady();
+      $('centerCoords').textContent = 'Center(mm): (ready)';
+    } catch (e) {
+      console.warn('[gaze-engine] ensureReady failed:', e);
+      $('centerCoords').textContent = 'Center(mm): -- (engine init failed)';
+    }
+    gazeOn = true;
+  };
 
   function getCfg() {
     const fps   = Math.max(1, Math.min(60, Number($('gzFps').value) || 15));

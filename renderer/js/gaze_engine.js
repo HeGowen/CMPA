@@ -105,10 +105,11 @@ class GazeEngineJS {
     // 兼容 FaceMesh(fn) 与 FaceMesh.FaceMesh(fn)
     let fm = null;
     try {
-      fm = new FaceMesh({ locateFile: (f) => 'renderer/vendor/mediapipe/face_mesh/' + f });
+      // Path is relative to renderer/index.html
+      fm = new FaceMesh({ locateFile: (f) => './vendor/mediapipe/face_mesh/' + f });
       this.log('FaceMesh ready (local assets) via FaceMesh(fn)');
     } catch {
-      fm = new FaceMesh.FaceMesh({ locateFile: (f) => 'renderer/vendor/mediapipe/face_mesh/' + f });
+      fm = new FaceMesh.FaceMesh({ locateFile: (f) => './vendor/mediapipe/face_mesh/' + f });
       this.log('FaceMesh ready (local assets) via FaceMesh.FaceMesh(fn)');
     }
     fm.setOptions({
@@ -370,13 +371,22 @@ class GazeEngineJS {
   }
 
   // ========= 主流程 ========= //
-  async process(videoEl, pitchDeg, yawDeg) {
+  async process(src, pitchDeg, yawDeg) {
     if (!this._ready) return null;
-    if (!videoEl || !videoEl.videoWidth || !videoEl.videoHeight) return null;
+    // 支持 HTMLVideoElement 或 HTMLCanvasElement
+    let w = 0, h = 0; let image = null; let kind = 'unknown';
+    if (src && typeof src.videoWidth === 'number' && src.videoWidth > 0) {
+      w = src.videoWidth; h = src.videoHeight; image = src; kind = 'video';
+    } else if (src && typeof src.width === 'number' && src.width > 0) {
+      w = src.width; h = src.height; image = src; kind = 'canvas';
+    } else {
+      this.dbg('process(): invalid src (need <video> or <canvas>)');
+      return null;
+    }
 
-    const w = videoEl.videoWidth, h = videoEl.videoHeight;
     if (this._cvs.width !== w || this._cvs.height !== h) { this._cvs.width = w; this._cvs.height = h; }
-    this._ctx.drawImage(videoEl, 0, 0, w, h);
+    this._ctx.drawImage(image, 0, 0, w, h);
+    this.dbg(`process(): begin kind=${kind} size=${w}x${h}`);
 
     // 1) FaceMesh
     const res = await this._fmOnce(this._cvs);
@@ -386,7 +396,7 @@ class GazeEngineJS {
       return null;
     }
     const lm = faces[0];
-    this.log('xx landmarks from FaceMesh', { lm });
+    this.dbg(`FaceMesh landmarks count=${lm.length}`);
     const kps2d = new Float32Array(this.LANDMARK_IDS.length * 2);
     for (let i=0;i<this.LANDMARK_IDS.length;i++) {
       const id = this.LANDMARK_IDS[i];
