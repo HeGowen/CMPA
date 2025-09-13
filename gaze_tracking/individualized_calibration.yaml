@@ -1,0 +1,48 @@
+meta:
+  created: '2025-09-03T17:46:50'
+  samples: 13
+offset:
+  pitch: 0.0360272164282206
+  yaw: 0.03056010593644983
+affine:
+  M:
+  - - 1.5455342699823689
+    - 0.06756070561391053
+  - - 0.3338181697251256
+    - 1.414776224807167
+  b:
+  - 0.1013045973684713
+  - 0.10706701962966148
+poly2:
+  ax:
+  - 0.06957552
+  - 1.751094
+  - -0.25133569
+  - -0.40704801
+  - 1.06051972
+  - -1.62313903
+  ay:
+  - 0.10134799
+  - 0.0508121
+  - 1.34291059
+  - 0.01750876
+  - -0.08933853
+  - -0.19829896
+  true_quadratic: true
+selection:
+  recommended_mode: Poly2
+  metrics:
+    mean_px:
+      Raw: 255.27941146381679
+      Offset: 232.12508077335303
+      Affine: 78.63496349970715
+      Poly2: 73.30846255190218
+    mean_deg:
+      Raw: 4.97935907415194
+      Offset: 4.556286229194346
+      Affine: 1.5839930237011137
+      Poly2: 1.3724631733112924
+  notes:
+  - Only Offset/Affine/Poly2 are fitted; RotSO3/TotSO3/Homography removed.
+  - If multiple frames per point exist, per-point MEDIAN aggregation was applied automatically.
+  - If N<6, Poly2 falls back to affine-equivalent coefficients.

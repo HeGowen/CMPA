@@ -1,0 +1,418 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>EEG BLE (Windows) + VA + Gaze</title>
+
+<meta http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self' data: blob:;
+        script-src  'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:;
+        style-src   'self' 'unsafe-inline';
+        img-src     'self' data: blob:;
+        media-src   'self' blob:;
+        connect-src 'self' data: blob:;
+      ">
+
+<style>
+  body{font-family:Segoe UI,Arial,sans-serif;padding:16px}
+  h3{margin-top:18px}
+  input{padding:6px}
+  button{padding:8px 12px;margin-right:8px}
+  .mono{font-family:Consolas,ui-monospace,Menlo,monospace}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  #cam{display:none}
+  #vaCanvas{max-width:100%;border:1px solid #ccc}
+  .kv{font-size:15px}
+  .kv span{display:inline-block;min-width:112px}
+  #dbg{white-space:pre; font:12px/1.25em Consolas,ui-monospace,Menlo,monospace; margin-top:8px}
+  fieldset{border:1px solid #ddd;border-radius:8px;padding:10px;margin-top:10px}
+  legend{padding:0 6px;color:#333}
+  .cfg input[type="number"]{width:80px}
+  .cfg small{opacity:.75}
+  #eegPanel{margin-top:10px;border:1px solid #ddd;padding:10px;border-radius:8px;background:#fafafa}
+  #eegPanel .grid{display:grid;grid-template-columns:auto auto;gap:6px 18px}
+</style>
+
+<!-- vendored libs -->
+<script src="./vendor/face_detection/face_detection.js"></script>
+<script src="./vendor/onnxruntime/ort.all.min.js"></script>
+<script src="./vendor/opencv/opencv.js"></script>
+<script src="./vendor/mediapipe/face_mesh/face_mesh.js"></script>
+<script src="./vendor/three/three.min.js"></script>
+<script src="./vendor/js-yaml/js-yaml.min.js"></script>
+
+<script>
+  (() => {
+    const ortGlobal = window.ort || (typeof ort !== 'undefined' ? ort : null);
+    if (ortGlobal) {
+      const baseUrl = new URL('./vendor/onnxruntime/', window.location.href).href;
+      ortGlobal.env.wasm.wasmPaths = baseUrl;
+      const hc = (navigator.hardwareConcurrency || 4);
+      ortGlobal.env.wasm.numThreads = Math.min(4, Math.max(1, hc));
+      ortGlobal.env.wasm.simd = true;
+      ortGlobal.env.wasm.proxy = true;
+      window.ort = ortGlobal;
+      console.log('[ORT] wasmPaths =', ortGlobal.env.wasm.wasmPaths, 'threads=', ortGlobal.env.wasm.numThreads);
+    } else {
+      console.error('onnxruntime-web not loaded');
+    }
+    class OrtRunLock { constructor(){ this._chain = Promise.resolve(); } async run(fn){ let release; const p = new Promise(res => release = res); const prev = this._chain; this._chain = prev.then(() => p); await prev; try { return await fn(); } finally { release(); } } }
+    window.__ortRunLock = window.__ortRunLock || new OrtRunLock();
+    window.USE_GPU_FOR_VA = false;
+  })();
+</script>
+</head>
+<body>
+  <h3>EEG capture (Windows BLE)</h3>
+  <div>Name prefix: <input id="name" value="PPSG" style="width:220px"></div>
+  <div>Service UUID: <input id="svc" value="" style="width:420px"></div>
+  <div>Notify UUID: <input id="notify" value="ffee5343-0001-4ae5-8fa1-9fafd205e455" style="width:420px"></div>
+  <p class="row">
+    <button id="start">Connect & Start</button>
+    <button id="stop">Stop</button>
+    <span id="status" class="mono">Status: idle</span>
+  </p>
+  <div id="stats" class="mono" style="margin-top:6px">
+    last bytes: 0<br>total bytes: 0<br>samples: 0<br>shape: 0 × 0
+  </div>
+
+  <!-- EEG metrics -->
+  <div id="eegPanel">
+    <div class="row" style="margin-bottom:6px">
+      <div class="mono">Real-time Focus & Relax</div>
+      <div class="mono" id="eegTs"></div>
+    </div>
+    <div class="grid mono">
+      <div>Focus:</div><div id="focusVal">--</div>
+      <div>Relax:</div><div id="relaxVal">--</div>
+      <div>Gamma:</div><div id="bandG">--</div>
+      <div>Beta:</div><div id="bandB">--</div>
+      <div>Alpha:</div><div id="bandA">--</div>
+      <div>Theta:</div><div id="bandT">--</div>
+      <div>Delta:</div><div id="bandD">--</div>
+    </div>
+  </div>
+
+  <fieldset class="cfg">
+    <legend>Camera Inference Scheduler</legend>
+    <div class="row">
+      <label>Gaze FPS:
+        <input id="gzFps" type="number" min="1" max="60" step="1" value="15">
+      </label>
+      <label>VA every N gaze ticks:
+        <input id="vaDiv" type="number" min="1" max="10" step="1" value="2">
+      </label>
+      <label>Arrow scale:
+        <input id="gzScale" type="number" min="0.5" max="3" step="0.1" value="1.6">
+      </label>
+      <label>Head:
+        <input id="gzHead" type="number" min="0.02" max="0.3" step="0.01" value="0.08">
+      </label>
+      <label>Thickness:
+        <input id="gzThick" type="number" min="1" max="6" step="1" value="2">
+      </label>
+      <small class="mono">同一帧只调用一次 MediaPipe；以 Gaze 速率驱动，VA 按 N 次一算。</small>
+    </div>
+    <div class="row mono">
+      <span>Gaze EP: <b id="gzEP">--</b></span>
+      <span>VA EP: <b id="vaEP">--</b></span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Valence & Arousal</legend>
+    <p class="row">
+      <button id="vaStart">Start VA</button>
+      <button id="vaStop">Stop</button>
+      <button id="vaDbg">Debug: on</button>
+      <span id="vaState" class="mono">VA: idle</span>
+    </p>
+    <div class="row">
+      <div class="kv mono">
+        <div><span>Valence:</span> <b id="valV">--</b></div>
+        <div><span>Arousal:</span> <b id="valA">--</b></div>
+        <div><span>Detections:</span> <b id="valD">0</b></div>
+        <div style="margin-top:10px"><span>Notes:</span> <span id="vaNote">—</span></div>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Gaze</legend>
+    <div class="row" style="margin-bottom:6px">
+      <button id="gzStart">Start Gaze</button>
+      <button id="gzStop">Stop</button>
+      <span id="gzState" class="mono">Gaze: idle</span>
+      <span class="mono">Yaw: <b id="gzYaw">--</b></span>
+      <span class="mono">Pitch: <b id="gzPitch">--</b></span>
+    </div>
+  </fieldset>
+
+  <div class="row" style="margin-top:6px">
+    <label>Monitor mm (W×H):
+      <input id="monWmm" type="number" value="344" style="width:80px"> ×
+      <input id="monHmm" type="number" value="194" style="width:80px">
+    </label>
+    <label>YOffset(mm):
+      <input id="monYoff" type="number" value="0" style="width:80px">
+    </label>
+    <small class="mono">用于 3D 与屏幕 px 映射；px 尺寸取当前画布 1280×720。</small>
+  </div>
+
+  <div id="gaze3d" style="margin-top:10px;height:320px;border:1px solid #ddd;border-radius:8px;"></div>
+  <div class="mono" id="centerCoords" style="margin-top:6px">Center(mm): --</div>
+
+  <video id="cam" autoplay muted playsinline></video>
+  <canvas id="vaCanvas" width="1280" height="720"></canvas>
+  <div id="dbg" class="mono"></div>
+
+<script type="module">
+  const $ = id => document.getElementById(id);
+
+  // —— BLE —— //
+  $('start').onclick = async () => {
+    $('status').textContent = 'Status: starting...';
+    const res = await window.ble.start({
+      namePrefix: $('name').value.trim(),
+      serviceUUID: $('svc').value.trim(),
+      notifyUUID: $('notify').value.trim()
+    });
+    if (res && res.ok === false) $('status').textContent = 'Status: ' + (res.err || 'start failed');
+  };
+  $('stop').onclick = async () => { await window.ble.stop(); };
+  window.ble.onStatus(s => $('status').textContent = 'Status: ' + s);
+  window.ble.onData(d => {
+    $('stats').innerHTML = `last bytes: ${d.lastPacketBytes}<br>` +
+                           `total bytes: ${d.totalBytes}<br>` +
+                           `samples: ${d.samples}<br>` +
+                           `shape: ${d.samples} × ${d.channels}`;
+  });
+
+  // —— EEG metrics —— //
+  const pct = v => (typeof v === 'number' ? (v * 100).toFixed(1) + '%' : '--');
+  if (window.eeg) {
+    window.eeg.onMetrics((m) => {
+      if (!m) return;
+      $('focusVal').textContent = String(Number(m.focus).toFixed(1));
+      $('relaxVal').textContent = String(Number(m.relax).toFixed(1));
+      $('eegTs').textContent = new Date(m.ts).toLocaleTimeString();
+    });
+    window.eeg.onBands((b) => {
+      if (!b) return;
+      $('bandG').textContent = pct(b.gamma);
+      $('bandB').textContent = pct(b.beta);
+      $('bandA').textContent = pct(b.alpha);
+      $('bandT').textContent = pct(b.theta);
+      $('bandD').textContent = pct(b.delta);
+    });
+  }
+
+  // —— 相机 + VA + Gaze（沿用你现有逻辑，不破坏） —— //
+  import { FaceCam } from './js/cam.js';
+  import { VAPredictor } from './js/va.js';
+  import { GazePredictor } from './js/gaze.js';
+  import { GazeEngineJS } from './js/gaze_engine.js';
+  import { Gaze3DView }   from './js/gaze3d.js';
+
+  const video  = $('cam');
+  const canvas = $('vaCanvas');
+  const dbgBox = $('dbg');
+
+  const cam = new FaceCam(canvas, video, { debug: true }); // MediaPipe FaceDetection 的帧池
+  const va  = new VAPredictor({
+    setState: (t) => $('vaState').textContent = 'VA: ' + t,
+    setV: (v) => $('valV').textContent = v,
+    setA: (a) => $('valA').textContent = a,
+    setD: (n) => $('valD').textContent = String(n),
+    setNote: (n) => $('vaNote').textContent = n || '—',
+    onProvider: (p) => $('vaEP').textContent = p
+  });
+  const gaze = new GazePredictor({
+    setState: (t) => $('gzState').textContent = 'Gaze: ' + t,
+    setYaw:   (y) => $('gzYaw').textContent = y,
+    setPitch: (p) => $('gzPitch').textContent = p,
+    onProvider: (p) => $('gzEP').textContent = p
+  });
+
+  const threeBox = $('gaze3d');
+  const view3d = new Gaze3DView(threeBox, {
+    mmW: Number($('monWmm').value),
+    mmH: Number($('monHmm').value),
+    mmOffset: Number($('monYoff').value)
+  });
+
+  // —— 关键：3D 引擎（所有路径相对 renderer/index.html） —— //
+  const engine = new GazeEngineJS({
+    cameraYamlPath: 'renderer/gaze_assets/camera_calibration_matrix.yaml',
+    calibYamlPath:  'renderer/gaze_assets/individualized_calibration.yaml',
+    faceModelPath:  'renderer/gaze_assets/face_model_all.npy',
+    calibMode: 'poly2',
+    monitorMM: [Number($('monWmm').value), Number($('monHmm').value)],
+    monitorPixels: [canvas.width, canvas.height],
+    screenYOffsetMM: Number($('monYoff').value)
+  });
+
+  function refreshMonitor() {
+    const mmw = Number($('monWmm').value);
+    const mmh = Number($('monHmm').value);
+    const off = Number($('monYoff').value);
+    engine.setMonitor(mmw, mmh, canvas.width, canvas.height, off);
+    view3d.setMonitor(mmw, mmh, off);
+  }
+  ['monWmm','monHmm','monYoff'].forEach(id => $(id).addEventListener('change', refreshMonitor));
+
+  let dbgOn = true;
+  $('vaDbg').onclick = () => {
+    dbgOn = !dbgOn;
+    $('vaDbg').textContent = 'Debug: ' + (dbgOn ? 'on' : 'off');
+    cam.setDebug(dbgOn);
+    if (!dbgOn) dbgBox.textContent = '';
+  };
+
+  $('vaStart').onclick = async () => { await cam.start(); await va.ensureSession(); };
+  $('vaStop').onclick  = () => { va.reset(); };
+
+  let gazeOn = false;
+  $('gzStart').onclick = async () => {
+    await cam.start();
+    await gaze.ensureSession();
+    try {
+      console.log('[gaze-engine] ensureReady: start');
+      await engine.ensureReady();
+      $('centerCoords').textContent = 'Center(mm): (ready)';
+    } catch (e) {
+      console.warn('[gaze-engine] ensureReady failed:', e);
+      $('centerCoords').textContent = 'Center(mm): -- (engine init failed)';
+    }
+    gazeOn = true;
+  };
+  $('gzStop').onclick  = () => { gazeOn = false; gaze.reset(); view3d.update(null,null,null,null); $('centerCoords').textContent = 'Center(mm): --'; };
+
+  function getCfg() {
+    const fps   = Math.max(1, Math.min(60, Number($('gzFps').value) || 15));
+    const div   = Math.max(1, Math.min(10, Number($('vaDiv').value) || 2));
+    const scale = Math.max(0.5, Math.min(3,  Number($('gzScale').value) || 1.6));
+    return { fps, div, scale };
+  }
+
+  let lastTickTs = 0, tickCount = 0;
+
+  cam.onFrame(async (info) => {
+    const { fps, div, scale } = getCfg();
+    const now = performance.now();
+    const period = 1000 / fps;
+
+    const used = info.used && info.used !== 'none';
+    if (used && info.crop && info.crop.canvas) {
+      if (now - lastTickTs >= period) {
+        lastTickTs = now;
+        tickCount++;
+
+        if (gazeOn && gaze.session) {
+          await gaze.feed(info.crop.canvas, info.dbg?.bbPix);
+        }
+
+        // === [MOD] 把 FaceMesh 输入改为裁剪后的 face-canvas ===
+        if (gazeOn && engine.ready) {
+          try {
+            const { yaw, pitch } = gaze.getLastAngles(); // deg
+            if (Number.isFinite(yaw) && Number.isFinite(pitch)) {
+              const srcFor3D = info.crop?.canvas || video;   // [MOD] 新增
+              const out = await engine.process(srcFor3D, pitch, yaw);  // [MOD] 改 video → srcFor3D
+              if (out) {
+                view3d.update(out.face_model_transformed, out.face_center, out.gaze_vector, out.point_on_screen_3d);
+                $('centerCoords').textContent = `Center(mm): (${out.face_center.map(v => v.toFixed(1)).join(', ')}) · Px=(${out.point_on_screen_px.join(',')})`;
+              } else {
+                // [MOD] 轻量调试，避免刷屏
+                // console.debug('[gaze-engine] process() returned null (no landmarks or PnP fail)');
+              }
+            }
+          } catch (e) {
+            console.warn('[gaze-engine] process error:', e);
+          }
+        }
+
+        if (va.session && (tickCount % div === 0)) {
+          const ctx = info.crop.canvas.getContext('2d', { willReadFrequently: true });
+          const imgData = ctx.getImageData(0, 0, info.crop.canvas.width, info.crop.canvas.height);
+          va.feed(imgData);
+        }
+      }
+
+      drawGazeIfAny(info, scale);
+      $('vaNote').textContent = '';
+    } else {
+      if (va.session) va.feed(null);
+      $('vaNote').textContent = `faces: ${info.detections} / used: ${info.used || 'none'}`;
+      view3d.update(null, null, null, null);
+      if (!engine.ready) $('centerCoords').textContent = 'Center(mm): -- (engine init failed)';
+    }
+
+    $('valD').textContent = String(info.detections);
+
+    if (dbgOn) {
+      const lines = [];
+      lines.push(`faces: ${info.detections}  used: ${info.used}`);
+      if (info.dbg?.bbPix) lines.push(`bbPix x,y,w,h: ${info.dbg.bbPix.x},${info.dbg.bbPix.y},${info.dbg.bbPix.w},${info.dbg.bbPix.h}`);
+      if (info.crop) {
+        lines.push(`crop x1,y1,x2,y2: ${info.crop.cropRect.x1}, ${info.crop.cropRect.y1}, ${info.crop.cropRect.x2}, ${info.crop.cropRect.y2}`);
+        lines.push(`angle: ${info.crop.angleDeg.toFixed(1)}°`);
+      }
+      dbgBox.textContent = lines.join('\n');
+    }
+  });
+
+  function drawGazeIfAny(info, scaleVal) {
+    const { yaw, pitch } = gaze.getLastAngles(); // deg
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
+    if (!info.dbg?.bbPix) return;
+
+    const ctx = canvas.getContext('2d');
+    const vw = canvas.width;
+
+    const b = info.dbg.bbPix;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const L  = Math.max(8, b.w * (scaleVal ?? 1.6));
+
+    const yawRad   = yaw   * Math.PI / 180;
+    const pitchRad = pitch * Math.PI / 180;
+
+    const dx = -L * Math.sin(pitchRad) * Math.cos(yawRad);
+    const dy = -L * Math.sin(yawRad);
+
+    const x1 = cx,      y1 = cy;
+    const x2 = cx + dx, y2 = cy + dy;
+
+    const drawX1 = vw - x1, drawY1 = y1;
+    const drawX2 = vw - x2, drawY2 = y2;
+
+    const thickness = Math.max(1, Math.min(6, Number($('gzThick').value) || 2));
+    const headRatio = Math.max(0.02, Math.min(0.3, Number($('gzHead').value) || 0.08));
+    const ah = headRatio * L;
+
+    ctx.save();
+    ctx.strokeStyle = '#ff0066';
+    ctx.fillStyle   = '#ff0066';
+    ctx.lineWidth = thickness;
+
+    ctx.beginPath();
+    ctx.moveTo(drawX1, drawY1);
+    ctx.lineTo(drawX2, drawY2);
+    ctx.stroke();
+
+    const ang = Math.atan2(drawY2 - drawY1, drawX2 - drawX1);
+    const wing = Math.PI / 6;
+    ctx.beginPath();
+    ctx.moveTo(drawX2, drawY2);
+    ctx.lineTo(drawX2 - ah * Math.cos(ang - wing), drawY2 - ah * Math.sin(ang - wing));
+    ctx.lineTo(drawX2 - ah * Math.cos(ang + wing), drawY2 - ah * Math.sin(ang + wing));
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+</script>
+</body>
+</html>

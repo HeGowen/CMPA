@@ -1,0 +1,78 @@
+{
+  "name": "eeg-electron-nodeapi-win",
+  "version": "0.1.0",
+  "description": "Minimal EEG BLE capture + real-time Valence/Arousal (Windows) + Focus/Relax (Node)",
+  "author": "Aptom",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "main.js",
+  "scripts": {
+    "build:addon": "node-gyp rebuild --runtime=electron --target=31.3.0 --dist-url=https://electronjs.org/headers --arch=x64",
+    "start": "electron .",
+    "dev": "set ELECTRON_ENABLE_LOGGING=1&& electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis --win portable"
+  },
+  "dependencies": {
+    "@mediapipe/face_detection": "^0.4.1646425229",
+    "@mediapipe/face_mesh": "^0.4.1633559619",
+    "@mediapipe/hands": "^0.4.1675469240",
+    "@mediapipe/pose": "^0.5.1675469404",
+    "fft.js": "^4.0.4",
+    "onnxruntime-web": "^1.19.0"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "node-addon-api": "^8.2.1",
+    "node-gyp": "^10.3.1"
+  },
+  "build": {
+    "appId": "com.aptom.eeg",
+    "productName": "EEG BLE Capture",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "build/Release/*.node",
+      "models/**",
+      "main/**",
+      "gaze_tracking/**"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "build/Release/*.node",
+      "renderer/vendor/**",
+      "models/**",
+      "gaze_tracking/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-Setup-${arch}.${ext}",
+      "requestedExecutionLevel": "asInvoker",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": true
+    }
+  }
+}

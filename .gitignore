@@ -1,0 +1,31 @@
+# Build artifacts
+build/
+dist/
+
+# User data caches
+.userData/
+.usrData/
+
+# Package manager deps (third-party)
+node_modules/
+
+# Vendorized external dependencies (any level)
+vendor/
+**/vendor/
+renderer/vendor/
+
+# Logs and temp files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+*.tmp
+*.swp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
