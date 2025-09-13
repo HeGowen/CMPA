@@ -13,8 +13,8 @@ class GazeEngineJS {
       calibYamlPath:  'renderer/gaze_assets/individualized_calibration.yaml',
       faceModelPath:  'renderer/gaze_assets/face_model_all.npy',
       calibMode: 'poly2',
-      monitorMM: [344, 194],       // 物理尺寸，单位 mm
-      monitorPixels: [1280, 720],  // 画布像素
+      monitorMM: [345, 215],       // 物理尺寸，单位 mm
+      monitorPixels: [1920, 1200],  // 画布像素
       screenYOffsetMM: 0,
       // 调试：true 则每帧输出详细中间量
       debug: true
@@ -395,6 +395,7 @@ class GazeEngineJS {
       kps2d[i*2+0] = x;
       kps2d[i*2+1] = y;
     }
+    try { window.dbg && window.dbg.log('[gaze-engine] landmarks(px) 7*2 =', Array.from(kps2d)); } catch {}
     this._pushBuf('landmarks', kps2d);
     const sm2d = new Float32Array(kps2d.length);
     const arrs = this.buf.landmarks;
@@ -438,6 +439,7 @@ class GazeEngineJS {
     const rSm = this._avgBuf('rvec'), tSm = this._avgBuf('tvec');
 
     this.dbg('rvec:', this._fmtArr(rSm, 4, 3), '  tvec(mm):', this._fmtArr(tSm, 1, 3));
+    try { window.dbg && window.dbg.log('[gaze-engine] rvec=', Array.from(rSm), ' tvec(mm)=', Array.from(tSm)); } catch {}
 
     // 3) Rodrigues
     const rMat = cv.matFromArray(3, 1, cv.CV_64F, Array.from(rSm));
@@ -460,6 +462,7 @@ class GazeEngineJS {
     cx/=Nall; cy/=Nall; cz/=Nall;
     const center = new Float64Array([cx, cy, cz]);
     this.dbg(`Center(mm): (${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)})`);
+    try { window.dbg && window.dbg.log('[gaze-engine] Center(mm)=', [Number(cx.toFixed(2)), Number(cy.toFixed(2)), Number(cz.toFixed(2))]); } catch {}
 
     // 清理临时 Mat
     obj.delete(); img.delete(); K.delete(); D.delete();
@@ -481,11 +484,13 @@ class GazeEngineJS {
     this._pushBuf('gaze', g);
     const gSm = this._avgBuf('gaze');
     this.dbg('Gaze vec:', this._fmtArr(gSm, 4, 3));
+    try { window.dbg && window.dbg.log('[gaze-engine] GazeVec=', Array.from(gSm)); } catch {}
 
     const hit = this._rayPlane(center, gSm);
     if (!hit) { this.warn('ray-plane no hit (v.z≈0)'); return null; }
     const px = this._mm2px(hit[0], hit[1]);
     this.dbg(`Hit(mm): (${hit[0].toFixed(1)}, ${hit[1].toFixed(1)}, ${hit[2].toFixed(1)})  ->  Px=(${Math.round(px[0])}, ${Math.round(px[1])})`);
+    try { window.dbg && window.dbg.log('[gaze-engine] Hit(mm)=', [Number(hit[0].toFixed(2)), Number(hit[1].toFixed(2)), Number(hit[2].toFixed(2))], 'Px=', [Math.round(px[0]), Math.round(px[1])]); } catch {}
 
     return {
       face_model_transformed: face3d,

@@ -147,6 +147,11 @@ app.on('browser-window-created', () => {
   attachNativeCallbacks();
 });
 
+// Debug log relay from renderer to main console
+ipcMain.on('dbg:log', (_evt, ...args) => {
+  try { console.log('[renderer]', ...args); } catch {}
+});
+
 app.on('window-all-closed', () => {
   app.quit();
 });

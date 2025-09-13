@@ -97,6 +97,11 @@ contextBridge.exposeInMainWorld('eeg', {
   onBands:   (cb) => ipcRenderer.on('eeg:bands',   (_e, b) => cb && cb(b)),
 });
 
+// ---- Debug log bridge (renderer -> main console) ----
+contextBridge.exposeInMainWorld('dbg', {
+  log: (...args) => ipcRenderer.send('dbg:log', ...args),
+});
+
 // ---- VA helper: read model bytes ----
 async function readModel(rel) {
   const tries = candidates(rel);
