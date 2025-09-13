@@ -18,6 +18,7 @@ Run (Dev)
 
 Build (Packaging)
 - `npm run dist` — builds Windows NSIS installer and portable.
+- Pre-check runs automatically (`predist`): verifies vendor assets and models exist. If missing, it fails with guidance.
 - Ensure vendor assets and models exist on disk before building (see Assets).
 
 Assets
@@ -27,6 +28,7 @@ Assets
 - Helpers:
   - `npm run fetch:vendor` — runs `scripts/fetch_vendor.ps1` to fetch/copy required vendor files and copy available gaze assets from `gaze_tracking/` to `renderer/gaze_assets/`.
   - Place model files manually into `models/` (kept out of VCS). The app and packaging will include them if present.
+  - Automated check: `node scripts/check_assets.js` (executes automatically before `npm run dist`).
 
 Repository Hygiene
 - `.gitignore` excludes: `build/`, `dist/`, `.userData/`, `.usrData/`, `node_modules/`, any `vendor/`, and large/binary assets (`models/**`, `*.onnx`, `*.npy`, `*.tflite`, `*.wasm`, `*.binarypb`, `*.pdb`, `*.obj`) and gaze logs.
@@ -36,4 +38,3 @@ Status
 - Valence/Arousal: implemented in `renderer/js/va.js` using `onnxruntime-web`.
 - Gaze tracking: implemented under `renderer/js/*`; calibration assets under `renderer/gaze_assets/`.
 - Eye‑tracking integration: dependencies staged, still under active development.
-

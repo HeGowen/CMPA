@@ -14,6 +14,7 @@
     "dev:win": "set ELECTRON_OVERRIDE_DIST_PATH=%cd%\\node_modules\\electron\\dist&& set ELECTRON_ENABLE_LOGGING=1&& electron .",
     "dev:trace": "set ELECTRON_OVERRIDE_DIST_PATH=%cd%\\node_modules\\electron\\dist&& set ELECTRON_ENABLE_LOGGING=1&& set ELECTRON_ENABLE_STACK_DUMPING=1&& set NODE_OPTIONS=--trace-warnings&& electron .",
     "pack": "electron-builder --dir",
+    "predist": "node scripts/check_assets.js",
     "dist": "electron-builder --win nsis --win portable",
     "fetch:vendor": "powershell -ExecutionPolicy Bypass -File .\\scripts\\fetch_vendor.ps1"
   },
