@@ -50,3 +50,13 @@
 - `approval_policy`: `never` (non‑interactive; agent runs commands without asking).
 - `sandbox_mode`: `workspace-write` (or `danger-full-access` if allowed).
 - `network_access`: `enabled` when vendor/model fetch is required.
+
+## Shell Usage Policy
+- Avoid PowerShell-specific commands and scripts. Prefer native editing via `apply_patch` and built-in capabilities over shell usage.
+- Use shell commands only when necessary (e.g., building, running, or downloading dependencies). For downloads or installs, request escalation and state the reason.
+- Prefer cross-platform commands and npm scripts (`npm run …`) instead of PowerShell cmdlets or syntax.
+- When searching, prefer `rg` if available; otherwise use portable alternatives like `git grep`. Do not rely on PowerShell-only features.
+
+## Repository Remote
+- Primary remote: `https://github.com/HeGowen/CMPA.git`.
+- When asked to push, push to this remote.
