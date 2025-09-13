@@ -46,6 +46,8 @@ class GazeEngineJS {
     // 缓冲
     this.buf = { landmarks: [], rvec: [], tvec: [], gaze: [] };
     this.bufMax = { landmarks: 3, rvec: 3, tvec: 3, gaze: 10 };
+    this._busy = false;           // prevent concurrent process()
+    this._lastHeavyLogAt = 0;     // throttle heavy debug dumps
 
     // 相机参数
     this.K = null;      // Float64Array[9]
@@ -69,6 +71,38 @@ class GazeEngineJS {
   warn(...a){ console.warn('[gaze-engine]', ...a); }
   err(...a){ console.error('[gaze-engine]', ...a); }
   dbg(...a){ if (this.opts.debug) console.log('[gaze-engine][DBG]', ...a); }
+  // ring-buffer helpers for smoothing
+  _pushBuf(key, arr) {
+    if (!this.buf[key]) this.buf[key] = [];
+    // store a copy to avoid later mutation side-effects
+    const ctor = (arr && arr.constructor) ? arr.constructor : Float64Array;
+    const copy = arr ? new ctor(arr) : null;
+    this.buf[key].push(copy);
+    const maxn = (this.bufMax && this.bufMax[key]) ? this.bufMax[key] : 3;
+    while (this.buf[key].length > maxn) this.buf[key].shift();
+  }
+  _avgBuf(key) {
+    const list = this.buf[key] || [];
+    if (!list.length) return new Float64Array(0);
+    const n = list.length;
+    const first = list[0];
+    const L = first.length || 0;
+    const ctor = (first && first.constructor) ? first.constructor : Float64Array;
+    const out = new Float64Array(L);
+    for (let i = 0; i < L; i++) {
+      let s = 0;
+      for (let k = 0; k < n; k++) s += Number(list[k][i]) || 0;
+      out[i] = s / n;
+    }
+    return new ctor(out);
+  }
+  _dbgShape(name, arr, shapeText=''){
+    try {
+      const len = (arr && typeof arr.length === 'number') ? arr.length : 'n/a';
+      const shape = shapeText || (len !== 'n/a' ? `len=${len}` : '');
+      this.dbg(`${name} ${shape}`);
+    } catch {}
+  }
 
   // —— 对外可见 —— //
   getStatus(){ return this._status; }

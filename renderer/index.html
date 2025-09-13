@@ -435,6 +435,7 @@
   let lastVaAt  = 0;  // VA scheduler
 
   // Gaze consumer: runs at configured FPS; also drives 3D engine + arrow
+  let engineBusy = false; // prevent concurrent engine.process()
   cam.setGazeConsumer(async (faceCanvas, bbPix) => {
     const { fps, scale } = getCfg();
     const now = performance.now();
@@ -446,7 +447,8 @@
 
     await gaze.feed(faceCanvas, bbPix);
 
-    if (engine.ready) {
+    if (engine.ready && !engineBusy) {
+      engineBusy = true;
       try {
         const { yaw, pitch } = gaze.getLastAngles();
         if (Number.isFinite(yaw) && Number.isFinite(pitch)) {
@@ -457,6 +459,7 @@
           }
         }
       } catch (e) { console.warn('[gaze-engine] process error:', e); }
+      finally { engineBusy = false; }
     }
 
     drawGazeArrow(bbPix, scale);
