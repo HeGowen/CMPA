@@ -8,10 +8,14 @@
   "main": "main.js",
   "scripts": {
     "build:addon": "node-gyp rebuild --runtime=electron --target=31.3.0 --dist-url=https://electronjs.org/headers --arch=x64",
+    "rebuild:addon": "node scripts/rebuild_addon.js",
     "start": "electron .",
     "dev": "set ELECTRON_ENABLE_LOGGING=1&& electron .",
+    "dev:win": "set ELECTRON_OVERRIDE_DIST_PATH=%cd%\\node_modules\\electron\\dist&& set ELECTRON_ENABLE_LOGGING=1&& electron .",
+    "dev:trace": "set ELECTRON_OVERRIDE_DIST_PATH=%cd%\\node_modules\\electron\\dist&& set ELECTRON_ENABLE_LOGGING=1&& set ELECTRON_ENABLE_STACK_DUMPING=1&& set NODE_OPTIONS=--trace-warnings&& electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis --win portable"
+    "dist": "electron-builder --win nsis --win portable",
+    "fetch:vendor": "powershell -ExecutionPolicy Bypass -File .\\scripts\\fetch_vendor.ps1"
   },
   "dependencies": {
     "@mediapipe/face_detection": "^0.4.1646425229",
